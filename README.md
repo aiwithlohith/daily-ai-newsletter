@@ -1,11 +1,11 @@
 # 🤖 Daily AI Newsletter
 
-> **Automated daily digest of the Top 10 Major AI Updates** — delivered to your inbox at **10:00 PM IST** every day.
+> **Automated daily digest of the Top 10 Major AI Updates** — delivered to your inbox at **10:00 AM IST** every day.
 
 ![Workflow Status](https://github.com/aiwithlohith/daily-ai-newsletter/actions/workflows/ai-newsletter.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11-blue.svg)
-![Schedule](https://img.shields.io/badge/schedule-daily%2010%3A00%20PM%20IST-purple.svg)
+![Schedule](https://img.shields.io/badge/schedule-daily%2010%3A00%20AM%20IST-purple.svg)
 
 ---
 
@@ -46,16 +46,17 @@ A beautifully formatted HTML email with **exactly 10 major AI updates**, ranked 
 Click the **Fork** button above → your GitHub account
 
 ### 2. Add Required Secrets
-Go to **Settings → Secrets and variables → Actions → New repository secret** (add all 6):
+Go to **Settings → Secrets and variables → Actions → New repository secret** (add all 7):
 
 | Secret Name | Value | Example |
 |-------------|-------|---------|
 | `SMTP_SERVER` | Your SMTP server | `smtp.gmail.com` |
 | `SMTP_PORT` | SMTP port (usually 587) | `587` |
-| `SMTP_USERNAME` | Your email address | `you@gmail.com` |
+| `SMTP_USERNAME` | Your email address | `aiwithlohith@gmail.com` |
 | `SMTP_PASSWORD` | **App Password** (not login password) | `abcd efgh ijkl mnop` |
-| `EMAIL_FROM` | Sender address | `you@gmail.com` |
-| `EMAIL_TO` | Recipient address | `lohithnajn@gmail.com` |
+| `EMAIL_FROM` | Sender address | `aiwithlohith@gmail.com` |
+| `EMAIL_TO` | Fallback recipient (if sheets fails) | `lohithnajn@gmail.com` |
+| `SUBSCRIBERS_SHEET_URL` | Google Sheets CSV export URL | `https://docs.google.com/spreadsheets/d/.../export?format=csv` |
 
 > **Gmail Users**: Enable 2FA → [App Passwords](https://myaccount.google.com/apppasswords) → Generate for "Mail"
 
@@ -167,6 +168,30 @@ Built for **AI practitioners** who need signal over noise. Instead of scrolling 
 2. Suggest new RSS feeds via Issues
 3. Improve keyword scoring logic
 4. Enhance email template
+
+---
+
+## 📬 Subscribe to the Newsletter
+
+Want to receive the daily AI newsletter? **Subscribe here:**
+
+[![Subscribe](https://img.shields.io/badge/Subscribe-Get%20Daily%20AI%20Updates-667eea?style=for-the-badge&logo=gmail&logoColor=white)](https://forms.gle/YOUR_GOOGLE_FORM_LINK)
+
+### 🛠️ Set Up Your Own Subscription System (Free, No Server)
+
+1. **Create a Google Form** → [forms.new](https://forms.new)
+   - Add one field: **Email address** (Short answer, required)
+   - Settings → Responses → Link to Sheets → Create new spreadsheet
+
+2. **Publish the Sheet as CSV**
+   - In Google Sheets: File → Share → Publish to web
+   - Select "Comma-separated values (.csv)" → Entire Document → Publish
+   - Copy the published URL → Add as `SUBSCRIBERS_SHEET_URL` secret
+
+3. **Add Form Link to README**
+   - Replace `https://forms.gle/YOUR_GOOGLE_FORM_LINK` above with your form URL
+
+> **How it works**: The workflow fetches the published CSV daily, extracts emails, and sends to all subscribers. No backend needed!
 
 ---
 

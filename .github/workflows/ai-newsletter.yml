@@ -2,8 +2,8 @@ name: Daily AI Newsletter
 
 on:
   schedule:
-    # Runs daily at 10:00 PM IST = 16:30 UTC
-    - cron: '30 16 * * *'
+    # Runs daily at 10:00 AM IST = 04:30 UTC
+    - cron: '30 4 * * *'
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
@@ -246,7 +246,7 @@ jobs:
               <body>
                   <div class="header">
                                     <h1>🎯 Top 10 Major AI Updates</h1>
-                                    <p>{datetime.now().strftime('%B %d, %Y')} • 10:00 PM IST • Curated from {len(RSS_FEEDS)} sources</p>
+                                                      <p>{datetime.now().strftime('%B %d, %Y')} • 10:00 AM IST • Curated from {len(RSS_FEEDS)} sources</p>
                   </div>
                   <div class="content">
                       <div class="stats">
@@ -285,39 +285,71 @@ jobs:
               """
               return html
 
-          def send_email(html_content):
-              """Send email via SMTP."""
+          def get_subscribers():
+                        """Fetch subscriber emails from Google Sheets (published as CSV)."""
+                        sheet_url = os.environ.get('SUBSCRIBERS_SHEET_URL')
+                        if not sheet_url:
+                            print("⚠️ No SUBSCRIBERS_SHEET_URL configured, using fallback EMAIL_TO")
+                            fallback = os.environ.get('EMAIL_TO')
+                            return [fallback] if fallback else []
+              
+                        try:
+                            import urllib.request
+                            response = urllib.request.urlopen(sheet_url, timeout=10)
+                            csv_data = response.read().decode('utf-8')
+                            emails = []
+                            for line in csv_data.strip().split('\n')[1:]:  # Skip header
+                                email = line.split(',')[0].strip().strip('"')
+                                if email and '@' in email:
+                                    emails.append(email)
+                            print(f"📬 Loaded {len(emails)} subscribers from Google Sheets")
+                            return emails
+                        except Exception as e:
+                            print(f"❌ Failed to fetch subscribers: {e}")
+                            fallback = os.environ.get('EMAIL_TO')
+                            return [fallback] if fallback else []
+
+                    def send_email(html_content):
+                        """Send email via SMTP to all subscribers."""
               smtp_server = os.environ.get('SMTP_SERVER')
               smtp_port = int(os.environ.get('SMTP_PORT', 587))
               username = os.environ.get('SMTP_USERNAME')
               password = os.environ.get('SMTP_PASSWORD')
               from_addr = os.environ.get('EMAIL_FROM')
-              to_addr = os.environ.get('EMAIL_TO')
               
-              if not all([smtp_server, smtp_port, username, password, from_addr, to_addr]):
+                        if not all([smtp_server, smtp_port, username, password, from_addr]):
                   print("❌ Missing email configuration. Check GitHub secrets.")
                   return False
               
-              msg = MIMEMultipart('alternative')
-              msg['Subject'] = f"🤖 Daily AI Briefing — {datetime.now().strftime('%b %d, %Y')}"
-              msg['From'] = from_addr
-              msg['To'] = to_addr
+                        subscribers = get_subscribers()
+                        if not subscribers:
+                            print("❌ No subscribers found")
+                            return False
               
-              # Plain text fallback
+                        subject = f"🤖 Daily AI Briefing — {datetime.now().strftime('%b %d, %Y')}"
               text_content = f"Daily AI Briefing - {datetime.now().strftime('%B %d, %Y')}\n\nView this email in HTML format for the best experience."
-              msg.attach(MIMEText(text_content, 'plain'))
-              msg.attach(MIMEText(html_content, 'html'))
               
-              try:
-                  with smtplib.SMTP(smtp_server, smtp_port) as server:
-                      server.starttls()
-                      server.login(username, password)
-                      server.send_message(msg)
-                  print(f"✅ Newsletter sent to {to_addr}")
-                  return True
-              except Exception as e:
-                  print(f"❌ Failed to send email: {e}")
-                  return False
+                        success_count = 0
+                        for to_addr in subscribers:
+                            msg = MIMEMultipart('alternative')
+                            msg['Subject'] = subject
+                            msg['From'] = from_addr
+                            msg['To'] = to_addr
+                            msg.attach(MIMEText(text_content, 'plain'))
+                            msg.attach(MIMEText(html_content, 'html'))
+                  
+                            try:
+                                with smtplib.SMTP(smtp_server, smtp_port) as server:
+                                    server.starttls()
+                                    server.login(username, password)
+                                    server.send_message(msg)
+                                success_count += 1
+                                print(f"✅ Sent to {to_addr}")
+                            except Exception as e:
+                                print(f"❌ Failed to send to {to_addr}: {e}")
+              
+                        print(f"📊 Newsletter sent to {success_count}/{len(subscribers)} subscribers")
+                        return success_count > 0
 
           # ============================================================
           # MAIN EXECUTION
