@@ -1,0 +1,369 @@
+name: Daily AI Newsletter
+
+on:
+  schedule:
+    # Runs daily at 10:00 PM IST = 16:30 UTC
+    - cron: '30 16 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  send-newsletter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install feedparser requests beautifulsoup4 lxml
+
+      - name: Fetch and send AI newsletter
+        env:
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: |
+          python << 'EOF'
+          import feedparser
+          import requests
+          from bs4 import BeautifulSoup
+          import smtplib
+          from email.mime.text import MIMEText
+          from email.mime.multipart import MIMEMultipart
+          from datetime import datetime, timedelta
+          import os
+          import re
+
+          # ============================================================
+          # CONFIGURATION - AI NEWS SOURCES
+          # ============================================================
+          RSS_FEEDS = [
+              # Major AI research labs & companies
+              ("OpenAI Blog", "https://openai.com/blog/rss.xml"),
+              ("Google DeepMind Blog", "https://deepmind.google/blog/rss.xml"),
+              ("Anthropic Blog", "https://www.anthropic.com/news/rss.xml"),
+              ("Google AI Blog", "https://ai.googleblog.com/feeds/posts/default"),
+              ("Meta AI Blog", "https://ai.meta.com/blog/rss/"),
+              ("Microsoft Research AI", "https://www.microsoft.com/en-us/research/blog/rss.xml"),
+              ("NVIDIA Blog - AI", "https://blogs.nvidia.com/tag/artificial-intelligence/feed/"),
+              ("Hugging Face Blog", "https://huggingface.co/blog/rss.xml"),
+              ("LangChain Blog", "https://blog.langchain.dev/rss/"),
+              
+              # News aggregators & publications
+              ("MIT Technology Review - AI", "https://www.technologyreview.com/topic/artificial-intelligence/feed/"),
+              ("The Verge - AI", "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"),
+              ("VentureBeat - AI", "https://venturebeat.com/category/ai/feed/"),
+              ("TechCrunch - AI", "https://techcrunch.com/tag/artificial-intelligence/feed/"),
+              ("Ars Technica - AI", "https://feeds.arstechnica.com/arstechnica/technology-lab"),
+              ("Wired - AI", "https://www.wired.com/feed/tag/ai/latest/rss"),
+              
+              # Research & academic
+              ("arXiv - AI (cs.AI)", "http://export.arxiv.org/rss/cs.AI"),
+              ("arXiv - Machine Learning (cs.LG)", "http://export.arxiv.org/rss/cs.LG"),
+              ("arXiv - Computation & Language (cs.CL)", "http://export.arxiv.org/rss/cs.CL"),
+              ("arXiv - Computer Vision (cs.CV)", "http://export.arxiv.org/rss/cs.CV"),
+              
+              # Industry newsletters
+              ("The Batch (deeplearning.ai)", "https://www.deeplearning.ai/the-batch/feed/"),
+              ("Import AI (Jack Clark)", "https://importai.substack.com/feed"),
+              ("AI Weekly", "https://aiweekly.co/rss/"),
+              ("Ben's Bites", "https://bensbites.beehiiv.com/feed"),
+              ("TLDR AI", "https://tldr.tech/ai/rss"),
+          ]
+
+          # Keywords to prioritize (case-insensitive) - MAJOR AI UPDATES ONLY
+                    # Includes direct AI (models, research) + indirect AI (NVIDIA, hardware, infra, cloud AI)
+          PRIORITY_KEYWORDS = [
+                        # Major model releases & labs
+                        'gpt-5', 'gpt-4', 'o1', 'o3', 'claude 3.5', 'claude 3', 'gemini 1.5', 'gemini 2',
+                        'llama 3', 'llama 4', 'mistral large', 'mixtral', 'nemotron', 'phi-3', 'phi-4',
+                        'qwen 2', 'qwen 2.5', 'yi-', 'deepseek', 'command r', 'grok', 'x.ai',
+                        'openai', 'anthropic', 'google deepmind', 'meta ai', 'mistral ai',
+              
+                        # Breakthrough capabilities
+                        'reasoning model', 'chain of thought', 'test-time compute', 'inference scaling',
+                        'multimodal', 'native multimodal', 'video generation', 'sora', 'veo', 'movie gen',
+                        'audio generation', 'voice mode', 'real-time', 'omni',
+              
+                        # Architecture & techniques
+                        'mixture of experts', 'moe', 'mamba', 'state space', 'rnn', 'linear attention',
+                        'long context', '1m context', '10m context', 'infinite context',
+                        'distillation', 'quantization', 'speculative decoding', 'continuous batching',
+              
+                        # Agents & systems
+                        'ai agent', 'autonomous agent', 'computer use', 'operator', 'browser use',
+                        'tool use', 'function calling', 'mcp', 'model context protocol',
+                        'langgraph', 'autogen', 'crewai', 'swarm', 'openai assistants',
+              
+                        # RAG & retrieval (major advances only)
+                        'graphrag', 'colbert', 'late interaction', 'reranker', 'long-context rag',
+              
+                        # Benchmarks & eval (major)
+                        'gpqa', 'mmlu-pro', 'humanity\'s last exam', 'frontier math', 'swe-bench',
+                        'livecodebench', 'aider', 'arc-agi', 'reasoning benchmark',
+              
+                        # INDIRECT AI - Hardware/Infra/Cloud (major moves only)
+                        'nvidia', 'h100', 'h200', 'b100', 'b200', 'blackwell', 'rubin', 'grace hopper',
+                        'gb200', 'nvlink', 'nvl72', 'dgx', 'hgx', 'spectrum-x',
+                        'amd mi300', 'mi325', 'intel gaudi', 'gaudi 3', 'cerebras', 'groq', 'etched',
+                        'tpu v5', 'tpu v6', 'trillium', 'google cloud', 'aws trainium', 'aws inferentia',
+                        'azure maia', 'azure cobalt', 'microsoft ai infrastructure',
+              
+                        # Major funding / acquisitions / partnerships
+                        'billion', 'acquisition', 'acquired', 'merger', 'partnership', 'investment',
+                        'databricks', 'snowflake', 'mongodb', 'redis', 'pinecone', 'weaviate', 'chroma',
+                        'together ai', 'fireworks', 'any scale', 'modal', 'baseten', 'replicate',
+              
+                        # Regulation (major only)
+                        'eu ai act', 'executive order', 'white house', 'sb 1047', 'california ai',
+              
+                        # Research breakthroughs
+                        'nature', 'science', 'icml', 'neurips', 'iclr', 'breakthrough', 'state-of-the-art',
+                        'sota', 'world record', 'first to', 'unprecedented',
+          ]
+
+          def fetch_feed(name, url):
+              """Fetch and parse a single RSS feed."""
+              try:
+                  feed = feedparser.parse(url)
+                  entries = []
+                  for entry in feed.entries[:10]:  # Limit per feed
+                      # Parse date
+                      pub_date = None
+                      if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                          pub_date = datetime(*entry.published_parsed[:6])
+                      elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                          pub_date = datetime(*entry.updated_parsed[:6])
+                      
+                      # Skip if older than 48 hours
+                      if pub_date and pub_date < datetime.now() - timedelta(hours=48):
+                          continue
+                      
+                      title = entry.get('title', '').strip()
+                      link = entry.get('link', '').strip()
+                      summary = entry.get('summary', entry.get('description', '')).strip()
+                      
+                      # Clean HTML from summary
+                      if summary:
+                          soup = BeautifulSoup(summary, 'html.parser')
+                          summary = soup.get_text()[:300]
+                      
+                      entries.append({
+                          'source': name,
+                          'title': title,
+                          'link': link,
+                          'summary': summary,
+                          'date': pub_date,
+                      })
+                  return entries
+              except Exception as e:
+                  print(f"Error fetching {name}: {e}")
+                  return []
+
+          def score_entry(entry):
+              """Score entry based on priority keywords."""
+              text = (entry['title'] + ' ' + entry['summary']).lower()
+              score = 0
+              for kw in PRIORITY_KEYWORDS:
+                  if kw.lower() in text:
+                      score += 1
+              # Boost recent entries
+              if entry['date']:
+                  hours_ago = (datetime.now() - entry['date']).total_seconds() / 3600
+                  if hours_ago < 12:
+                      score += 3
+                  elif hours_ago < 24:
+                      score += 2
+                  elif hours_ago < 48:
+                      score += 1
+              return score
+
+          def categorize_entry(entry):
+              """Categorize entry into sections."""
+              text = (entry['title'] + ' ' + entry['summary']).lower()
+              
+              if any(kw in text for kw in ['gpt', 'llm', 'large language model', 'claude', 'gemini', 'llama', 'mistral', 'transformer', 'token', 'context window']):
+                  return '🧠 LLMs & Foundation Models'
+              elif any(kw in text for kw in ['agent', 'ai agent', 'autonomous', 'tool use', 'function calling', 'langchain', 'langgraph', 'autogen', 'crewai']):
+                  return '🤖 AI Agents & Frameworks'
+              elif any(kw in text for kw in ['rag', 'retrieval', 'vector database', 'embedding', 'semantic search', 'knowledge base']):
+                  return '🔍 RAG & Retrieval'
+              elif any(kw in text for kw in ['code', 'coding', 'copilot', 'cursor', 'programming', 'software engineering', 'code generation']):
+                  return '💻 Code & Development'
+              elif any(kw in text for kw in ['video', 'sora', 'veo', 'runway', 'pika', 'image', 'midjourney', 'dalle', 'stable diffusion', 'visual', 'multimodal']):
+                  return '🎨 Multimodal & Generation'
+              elif any(kw in text for kw in ['benchmark', 'eval', 'leaderboard', 'mmlu', 'gpqa', 'human eval', 'testing', 'safety', 'alignment', 'red team']):
+                  return '📊 Benchmarks, Eval & Safety'
+              elif any(kw in text for kw in ['regulation', 'policy', 'governance', 'eu ai act', 'law', 'compliance', 'ethics']):
+                  return '⚖️ Policy & Governance'
+              elif any(kw in text for kw in ['hardware', 'gpu', 'nvidia', 'h100', 'blackwell', 'chip', 'infrastructure', 'training', 'inference']):
+                  return '⚙️ Hardware & Infrastructure'
+              elif any(kw in text for kw in ['research', 'arxiv', 'paper', 'study', 'novel', 'proposed', 'method', 'architecture']):
+                  return '📚 Research Papers'
+              else:
+                  return '📰 General AI News'
+
+          def build_newsletter(entries, unique_entries):
+                        """Build HTML newsletter with ranked top 10."""
+              
+              html = f"""
+              <!DOCTYPE html>
+              <html>
+              <head>
+                  <meta charset="utf-8">
+                  <style>
+                      body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a1a2e; max-width: 700px; margin: 0 auto; padding: 20px; }}
+                      .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0; text-align: center; }}
+                      .header h1 {{ margin: 0; font-size: 28px; font-weight: 700; }}
+                      .header p {{ margin: 10px 0 0; opacity: 0.9; font-size: 14px; }}
+                      .content {{ background: #fafafa; padding: 30px; border-radius: 0 0 12px 12px; border: 1px solid #eaeaea; border-top: none; }}
+                                    .article {{ background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; border: 1px solid #eee; transition: transform 0.2s, box-shadow 0.2s; display: flex; gap: 16px; }}
+                      .article:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
+                                    .rank {{ display: inline-flex; width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); color: white; text-align: center; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; flex-shrink: 0; margin-top: 2px; }}
+                                    .article-body {{ flex: 1; min-width: 0; }}
+                                    .article-title {{ font-size: 16px; font-weight: 600; color: #1a1a2e; margin-bottom: 8px; line-height: 1.3; }}
+                      .article-title a {{ color: #1a1a2e; text-decoration: none; }}
+                      .article-title a:hover {{ color: #667eea; }}
+                                    .article-meta {{ font-size: 12px; color: #888; margin-bottom: 10px; display: flex; gap: 16px; flex-wrap: wrap; }}
+                      .article-source {{ font-weight: 600; color: #667eea; }}
+                                    .article-summary {{ font-size: 14px; color: #444; line-height: 1.55; }}
+                                    .footer {{ text-align: center; padding: 20px; color: #888; font-size: 12px; border-top: 1px solid #eee; margin-top: 20px; }}
+                      .stats {{ background: #f0f0f0; padding: 12px 20px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; color: #555; }}
+                                    .category-tag {{ display: inline-block; background: #e8e8ff; color: #667eea; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; margin-right: 6px; }}
+                  </style>
+              </head>
+              <body>
+                  <div class="header">
+                                    <h1>🎯 Top 10 Major AI Updates</h1>
+                                    <p>{datetime.now().strftime('%B %d, %Y')} • 10:00 PM IST • Curated from {len(RSS_FEEDS)} sources</p>
+                  </div>
+                  <div class="content">
+                      <div class="stats">
+                                        <strong>📊 Today's Selection:</strong> {len(entries)} major updates filtered from {len(unique_entries)} articles across {len(RSS_FEEDS)} sources
+                      </div>
+              """
+              
+                        for i, entry in enumerate(entries, 1):
+                            date_str = entry['date'].strftime('%b %d, %H:%M') if entry['date'] else 'Recent'
+                            category = categorize_entry(entry)
+                  
+                            html += f"""
+                      <div class="article">
+                                        <span class="rank">{i}</span>
+                                        <div class="article-body">
+                                            <div class="article-title"><a href="{entry['link']}" target="_blank">{entry['title']}</a></div>
+                                            <div class="article-meta">
+                                                <span class="article-source">{entry['source']}</span>
+                                                <span>•</span>
+                                                <span>{date_str}</span>
+                                                <span class="category-tag">{category}</span>
+                                            </div>
+                                            <div class="article-summary">{entry['summary']}...</div>
+                                        </div>
+                      </div>
+                            """
+              
+              html += f"""
+                      <div class="footer">
+                          <p>Generated automatically via GitHub Actions • <a href="https://github.com" style="color: #667eea;">View workflow</a></p>
+                          <p>Sources: {', '.join([name for name, _ in RSS_FEEDS])}</p>
+                      </div>
+                  </div>
+              </body>
+              </html>
+              """
+              return html
+
+          def send_email(html_content):
+              """Send email via SMTP."""
+              smtp_server = os.environ.get('SMTP_SERVER')
+              smtp_port = int(os.environ.get('SMTP_PORT', 587))
+              username = os.environ.get('SMTP_USERNAME')
+              password = os.environ.get('SMTP_PASSWORD')
+              from_addr = os.environ.get('EMAIL_FROM')
+              to_addr = os.environ.get('EMAIL_TO')
+              
+              if not all([smtp_server, smtp_port, username, password, from_addr, to_addr]):
+                  print("❌ Missing email configuration. Check GitHub secrets.")
+                  return False
+              
+              msg = MIMEMultipart('alternative')
+              msg['Subject'] = f"🤖 Daily AI Briefing — {datetime.now().strftime('%b %d, %Y')}"
+              msg['From'] = from_addr
+              msg['To'] = to_addr
+              
+              # Plain text fallback
+              text_content = f"Daily AI Briefing - {datetime.now().strftime('%B %d, %Y')}\n\nView this email in HTML format for the best experience."
+              msg.attach(MIMEText(text_content, 'plain'))
+              msg.attach(MIMEText(html_content, 'html'))
+              
+              try:
+                  with smtplib.SMTP(smtp_server, smtp_port) as server:
+                      server.starttls()
+                      server.login(username, password)
+                      server.send_message(msg)
+                  print(f"✅ Newsletter sent to {to_addr}")
+                  return True
+              except Exception as e:
+                  print(f"❌ Failed to send email: {e}")
+                  return False
+
+          # ============================================================
+          # MAIN EXECUTION
+          # ============================================================
+          print("🔍 Fetching AI news from RSS feeds...")
+          all_entries = []
+          
+          for name, url in RSS_FEEDS:
+              entries = fetch_feed(name, url)
+              all_entries.extend(entries)
+              print(f"  📡 {name}: {len(entries)} new articles")
+          
+          # Deduplicate by title similarity
+          unique_entries = []
+          seen_titles = set()
+          for entry in all_entries:
+              title_key = re.sub(r'[^\w\s]', '', entry['title'].lower())[:50]
+              if title_key not in seen_titles:
+                  seen_titles.add(title_key)
+                  unique_entries.append(entry)
+          
+          # Score and sort all entries
+          for entry in unique_entries:
+              entry['score'] = score_entry(entry)
+          unique_entries.sort(key=lambda x: x['score'], reverse=True)
+          
+          # Keep only TOP 10 major updates
+                    top_entries = unique_entries[:10]
+          
+          print(f"📊 Total unique articles: {len(unique_entries)}")
+                    print(f"📬 Top {len(top_entries)} MAJOR updates selected for newsletter")
+          
+          # Build and send
+                    html = build_newsletter(top_entries, unique_entries)
+          success = send_email(html)
+          
+          if not success:
+              exit(1)
+          EOF
+
+      - name: Success notification
+        if: success()
+        run: echo "✅ Daily AI Newsletter sent successfully!"
+
+      - name: Failure notification
+        if: failure()
+        run: |
+          echo "❌ Newsletter workflow failed"
+          # Could add Slack/webhook notification here
